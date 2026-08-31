@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+
+# Runtime Data & Credentials
+data/proxy_pool.json
+data/accounts.json
+data/orders_cache.json
+data/screenshots/
+data/qrcodes/
+data/excel_exports/
+*.xlsx
+*.xls
+*.csv
+.env
+.env.*
+.htpasswd
+
+# Logs
+*.log
+logs/
