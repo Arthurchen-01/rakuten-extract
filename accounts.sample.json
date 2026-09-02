@@ -1,0 +1,4 @@
+[
+  {"row_idx": 1, "email": "sample1@gmail.com", "password": "SamplePassword1"},
+  {"row_idx": 2, "email": "sample2@yahoo.co.jp", "password": "SamplePassword2"}
+]

@@ -1,0 +1,11 @@
+{
+  "nodes": [
+    {"id": "Node 1", "host": "38.76.174.32", "port": 22, "user": "root", "pass": "YOUR_PASSWORD", "python": "/opt/rakuten-hub/venv/bin/python"},
+    {"id": "Node 2", "host": "103.52.152.37", "port": 22, "user": "root", "pass": "YOUR_PASSWORD", "python": "/opt/rakuten-hub/.venv/bin/python"},
+    {"id": "Node 3", "host": "156.225.31.92", "port": 22, "user": "root", "pass": "YOUR_PASSWORD", "python": "/opt/rakuten-hub/.venv/bin/python"},
+    {"id": "Node 4", "host": "38.76.206.7", "port": 22, "user": "root", "pass": "YOUR_PASSWORD", "python": "/opt/deepseek-suite/.venv/bin/python"}
+  ],
+  "workers_per_node": 3,
+  "remote_run_dir": "/opt/rakuten_run",
+  "bind_ip": "192.168.1.25"
+}

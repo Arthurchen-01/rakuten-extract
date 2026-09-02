@@ -7,16 +7,31 @@ __pycache__/
 env/
 venv/
 
-# Runtime Data & Credentials
-data/proxy_pool.json
-data/accounts.json
-data/orders_cache.json
-data/screenshots/
-data/qrcodes/
-data/excel_exports/
+# Node & Browser Runtime
+node_modules/
+.playwright/
+
+# Runtime Data & Temporary Files
+data/
+batch_*/
+quarantine_legacy_*/
+scratch/
+*.json
+!config.sample.json
+!accounts.sample.json
+
+# Exported Excel & Image Reports
 *.xlsx
 *.xls
 *.csv
+*.png
+*.jpg
+*.jpeg
+*.html
+*.txt
+!requirements.txt
+
+# Environment & Credentials
 .env
 .env.*
 .htpasswd
