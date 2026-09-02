@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import re
+import random
 import argparse
 import traceback
 from pathlib import Path
@@ -81,7 +82,28 @@ def resilient_goto(page, url, wait_selector=None, max_retries=2, timeout=25000):
                 return False
     return False
 
-def extract_single_account(acc, worker_id=0):
+def load_random_proxy(proxy_file="data/proxy_pool.txt"):
+    """从动态代理池中随机抽取一个日本原生住宅代理"""
+    if not proxy_file or not os.path.exists(proxy_file):
+        return None
+    try:
+        with open(proxy_file, 'r', encoding='utf-8') as f:
+            lines = [l.strip() for l in f if l.strip()]
+        if not lines:
+            return None
+        p_str = random.choice(lines)
+        parts = p_str.split(':')
+        if len(parts) == 4:
+            return {
+                'server': f"http://{parts[0]}:{parts[1]}",
+                'username': parts[2],
+                'password': parts[3]
+            }
+    except Exception as e:
+        print(f"  ⚠️ 加载代理失败: {e}", flush=True)
+    return None
+
+def extract_single_account(acc, worker_id=0, proxy_file="data/proxy_pool.txt"):
     email = acc['email']
     pwd = acc['password']
     row_idx = acc.get('row_idx', 0)
@@ -110,9 +132,14 @@ def extract_single_account(acc, worker_id=0):
         'bana_orders': []
     }
     
+    proxy_config = load_random_proxy(proxy_file)
+    if proxy_config:
+        print(f"  🌐 挂载日本动态代理: {proxy_config['server']} (出口节点: {proxy_config['username'][:28]}...)", flush=True)
+        
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
+            proxy=proxy_config,
             args=[
                 '--no-sandbox',
                 '--disable-dev-shm-usage',
