@@ -281,8 +281,8 @@ def extract_single_account(page, email, password, snaps_dir, safe_acc, worker_ta
             print(f"[{worker_tag}] ❌ 密码错误(已现场截图): {email}", flush=True)
             return res
             
-        # 判定 B: 2FA 短信验证码 (立即现场截图落盘)
-        if any(kw in body_txt for kw in ['ワンタイムパスワード', '2段階認証', '確認コード']):
+        # 判定 B: 2FA 短信/邮件验证码 (立即现场截图落盘)
+        if any(kw in body_txt for kw in ['ワンタイムパスワード', '2段階認証', '確認コード']) or ('認証コード' in body_txt and 'スキップしてログイン' not in body_txt):
             snap_2fa = snaps_dir / f"{safe_acc}_failed_2fa.png"
             try:
                 page.screenshot(path=str(snap_2fa))
@@ -291,6 +291,19 @@ def extract_single_account(page, email, password, snaps_dir, safe_acc, worker_ta
             res['status'] = 'two_factor'
             print(f"[{worker_tag}] ⚠️ 需2FA(已现场截图): {email}", flush=True)
             return res
+
+        # 中转页: メールアドレスをご確認ください -> 点击「スキップしてログイン」放行
+        if 'メールアドレスをご確認ください' in body_txt or 'スキップしてログイン' in body_txt:
+            try:
+                with open(snaps_dir / f"{safe_acc}_email_confirm_page.html", 'w', encoding='utf-8') as hf:
+                    hf.write(page.content())
+            except Exception: pass
+            skip_btn = page.locator('button:has-text("スキップ"), a:has-text("スキップ"), [value*="スキップ"], [id*="skip" i], [class*="skip" i]').first
+            if skip_btn.count() > 0 and skip_btn.is_visible():
+                print(f"[{worker_tag}] ⚡ 发现邮箱确认页，点击「スキップしてログイン」放行: {email}", flush=True)
+                skip_btn.click()
+                time.sleep(4.0)
+                continue
 
         # 网关第 1 页: 本人連絡先の選択 (4行物理地址)
         if '本人連絡先の選択' in body_txt or '連絡先' in body_txt:
