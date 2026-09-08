@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Multi-Node Periodic Sync & bana JSON Audit Reporter
+Multi-Node Periodic Sync & Bana JSON Audit Reporter
 集群定点同步与 Bana 8 要素 JSON 验真汇报器
 支持采集 CPU/内存负载、无锁结果聚合与实时控制台审计汇报
 """
@@ -36,7 +36,7 @@ def sync_and_report_cluster(nodes_config, local_results_file, remote_run_dir="/o
             
             stdin, stdout, stderr = ssh.exec_command("top -bn1 | grep 'Cpu(s)' | awk '{print $2}'")
             cpu = stdout.read().decode('utf-8').strip()
-            stdin, stdout, stderr = ssh.exec_command("free -m | awk 'NR==2{printf "%.1f%% (%s/%s MB)", $3*100/$2, $3, $2 }'")
+            stdin, stdout, stderr = ssh.exec_command("free -m | awk 'NR==2{printf \"%.1f%% (%s/%s MB)\", $3*100/$2, $3, $2 }'")
             mem = stdout.read().decode('utf-8').strip()
             stdin, stdout, stderr = ssh.exec_command("ps aux | grep 'rakuten_worker.py' | grep -v grep | wc -l")
             procs = stdout.read().decode('utf-8').strip()
@@ -50,15 +50,33 @@ def sync_and_report_cluster(nodes_config, local_results_file, remote_run_dir="/o
             })
             
             sftp = ssh.open_sftp()
-            stdin, stdout, stderr = ssh.exec_command(f"ls {remote_run_dir}/results_w*.json 2>/dev/null")
-            remote_files = stdout.read().decode('utf-8').split()
-            for rf_path in remote_files:
-                try:
-                    with sftp.open(rf_path, 'r') as rf:
-                        part_data = json.load(rf)
-                        all_results.extend(part_data)
-                except Exception:
-                    pass
+            # 优先读取 batch_summary.json，若无则扫描单个 result_*.json
+            has_summary = False
+            try:
+                with sftp.open(f"{remote_run_dir}/batch_summary.json", 'r') as sf:
+                    summary_data = json.load(sf)
+                    for item in summary_data:
+                        item['node_source'] = node['id']
+                    all_results.extend(summary_data)
+                    has_summary = True
+            except Exception:
+                pass
+                
+            if not has_summary:
+                stdin, stdout, stderr = ssh.exec_command(f"ls {remote_run_dir}/result_*.json {remote_run_dir}/results_w*.json 2>/dev/null")
+                remote_files = stdout.read().decode('utf-8').split()
+                for rf_path in remote_files:
+                    try:
+                        with sftp.open(rf_path, 'r') as rf:
+                            part_data = json.load(rf)
+                            if isinstance(part_data, list):
+                                for item in part_data: item['node_source'] = node['id']
+                                all_results.extend(part_data)
+                            elif isinstance(part_data, dict):
+                                part_data['node_source'] = node['id']
+                                all_results.append(part_data)
+                    except Exception:
+                        pass
             sftp.close()
             trans.close()
         except Exception as e:
@@ -94,7 +112,7 @@ def sync_and_report_cluster(nodes_config, local_results_file, remote_run_dir="/o
     print("🖥️ 【服务器物理资源与运行状态】:")
     for s in node_stats:
         status_icon = "🟢" if int(s['procs']) > 0 else "🏁"
-        print(f"  {status_icon} {s['id']} ({s['host']}) | CPU: {s['cpu']}% | 内存: {s['mem']} | 活跃进程: {s['procs']} 个并发")
+        print(f"  {status_icon} {s['id']} ({s['host']}) | CPU: {s['cpu']}% | 内存: {s['mem']} | 活跃并发: {s['procs']}")
 
     print("-" * 85)
     pct = len(final_list) / tot * 100
@@ -103,12 +121,11 @@ def sync_and_report_cluster(nodes_config, local_results_file, remote_run_dir="/o
     
     active_samples = [r for r in final_list if r.get('status') == 'active' and r.get('order_count', 0) > 0]
     if active_samples:
-        print("🔍 【最新入库大号真实 JSON 原文字段验真】:
-")
+        print("🔍 【最新入库大号真实 JSON 原文字段验真】:\n")
         for s in active_samples[-2:]:
             p = s.get('profile', {})
             ords = s.get('bana_orders', [])
-            print(f"👉 账号: {s['email']} | 状态: {s['status']} | 订单数: {s.get('order_count', 0)}")
+            print(f"👉 账号: {s['email']} | 节点: {s.get('node_source', 'N/A')} | 状态: {s['status']} | 订单数: {s.get('order_count', 0)}")
             print(f"   ├─ 姓名: {p.get('full_name', '')}")
             print(f"   ├─ 门牌地址: {p.get('address', '').replace(chr(10), ' ')}")
             print(f"   ├─ 支付方式: {p.get('card_info', '')} | 持卡人: {p.get('card_holder', '')}")

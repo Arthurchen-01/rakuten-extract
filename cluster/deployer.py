@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Multi-Node Distributed Cluster Deployer
-4 台 / 多台独立云节点集群部署工具
-支持多 Worker 模数并发调度与账号物理分片
+4 台 / 6 台 / 多台独立云节点集群部署工具
+支持多 Worker 线程池并发调度与账号物理分片
 """
 import sys
 import os
@@ -22,7 +22,7 @@ def deploy_cluster(nodes_config, accounts_file, remote_run_dir="/opt/rakuten_run
     chunk_size = (total + num_nodes - 1) // num_nodes
     
     print("=" * 85)
-    print(f"🚀 集群部署启动: 共 {total} 户账号 | 分发至 {num_nodes} 台独立云服务器 | 每台机启动 {workers_per_node} 个并发 Worker")
+    print(f"🚀 集群部署启动: 共 {total} 户账号 | 分发至 {num_nodes} 台独立云服务器 | 每台机并发线程数: {workers_per_node}")
     print("=" * 85)
     
     worker_script_path = Path(__file__).resolve().parent.parent / "core" / "rakuten_worker.py"
@@ -44,7 +44,7 @@ def deploy_cluster(nodes_config, accounts_file, remote_run_dir="/opt/rakuten_run
             ssh._transport = trans
             
             sftp = ssh.open_sftp()
-            ssh.exec_command(f"mkdir -p {remote_run_dir}")
+            ssh.exec_command(f"mkdir -p {remote_run_dir}/screenshots")
             
             # 传输 Worker 脚本与分片账号
             remote_worker = f"{remote_run_dir}/rakuten_worker.py"
@@ -55,17 +55,16 @@ def deploy_cluster(nodes_config, accounts_file, remote_run_dir="/opt/rakuten_run
                 rf.write(json.dumps(part_accounts, ensure_ascii=False, indent=2))
             sftp.close()
             
-            # 清理旧进程并启动 workers_per_node 个新并发
-            ssh.exec_command(f"pkill -9 -f 'rakuten_worker.py'; rm -f {remote_run_dir}/results_w*.json")
+            # 清理旧进程并启动多线程批处理
+            ssh.exec_command(f"pkill -9 -f 'rakuten_worker.py'; rm -f {remote_run_dir}/result_*.json {remote_run_dir}/batch_*.json")
             
             python_bin = node.get('python', '/opt/rakuten-hub/venv/bin/python')
-            for w_id in range(workers_per_node):
-                cmd = f"nohup {python_bin} {remote_worker} --input {remote_accs} --output-dir {remote_run_dir} --worker-id {w_id} --num-workers {workers_per_node} > {remote_run_dir}/worker_{w_id}.log 2>&1 &"
-                ssh.exec_command(cmd)
+            cmd = f"nohup {python_bin} {remote_worker} --input {remote_accs} --output-dir {remote_run_dir} --workers {workers_per_node} > {remote_run_dir}/batch_run.log 2>&1 &"
+            ssh.exec_command(cmd)
                 
             stdin, stdout, stderr = ssh.exec_command("ps aux | grep 'rakuten_worker.py' | grep -v grep | wc -l")
             cnt = stdout.read().decode().strip()
-            print(f"  └─ 节点启动完毕！活跃并发 Worker 数: {cnt} / {workers_per_node}")
+            print(f"  └─ 节点启动完毕！活跃进程数: {cnt} (线程池并发: {workers_per_node})")
             trans.close()
         except Exception as e:
             print(f"  ❌ 节点 {node['id']} 部署异常: {e}")
