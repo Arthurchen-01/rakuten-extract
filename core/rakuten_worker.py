@@ -597,8 +597,10 @@ class NodeClusterBatchRunner:
                 except queue.Empty:
                     break
                     
-                email = acc['email']
-                pwd = acc['password']
+                email = acc.get('email') or acc.get('account') or ''
+                pwd = acc.get('password') or acc.get('pwd') or ''
+                if not email:
+                    continue
                 safe_acc = email.replace('@', '_').replace('.', '_')
                 
                 with self.lock:
