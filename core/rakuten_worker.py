@@ -172,7 +172,13 @@ def extract_single_account(page, email, password, snaps_dir, safe_acc, worker_ta
         time.sleep(1.5)
         u_in = page.locator('input#user_id, input[name="user_id"], input[type="text"]').first
     if not u_in.is_visible():
+        snap_page_err = snaps_dir / f"{safe_acc}_failed_login_page.png"
+        try:
+            page.screenshot(path=str(snap_page_err))
+            res['screenshots'].append(str(snap_page_err))
+        except Exception: pass
         res['status'] = 'login_page_error'
+        print(f"[{worker_tag}] ❌ 页面加载异常(无用户名框): {email}", flush=True)
         return res
         
     u_in.fill(email)
@@ -181,35 +187,111 @@ def extract_single_account(page, email, password, snaps_dir, safe_acc, worker_ta
         btn_next.click()
     else:
         u_in.press('Enter')
-    time.sleep(2.0)
     
-    body_txt = page.locator('body').inner_text() or ''
-    if 'パスキー' in body_txt or 'webauthn' in page.url:
-        switch_btn = page.locator('button:has-text("パスワード"), a:has-text("パスワード"), button:has-text("別の方法")').first
-        if switch_btn.count() > 0 and switch_btn.is_visible():
-            switch_btn.click()
-            time.sleep(2.0)
+    # 动态自适应轮询探测（最大 35 秒，自适应 SPA 异步渲染、跨洋网络延迟与 Passkey 探测）
+    p_in = None
+    start_wait = time.time()
+    while time.time() - start_wait < 35.0:
+        # 1. 优先探测密码框是否可见
+        cand_pin = page.locator('input[type="password"], #password_current').first
+        if cand_pin.count() > 0 and cand_pin.is_visible():
+            p_in = cand_pin
+            break
             
-    p_in = page.locator('input[type="password"], #password_current').first
-    if not p_in.is_visible():
-        time.sleep(1.5)
-        p_in = page.locator('input[type="password"], #password_current').first
-    if not p_in.is_visible():
+        # 2. 探测是否出现 Passkey / WebAuthn 页面
+        body_txt = page.locator('body').inner_text() or ''
+        curr_url = page.url
+        if 'パスキー' in body_txt or 'webauthn' in curr_url or page.locator('[id^="seco_"]').count() > 0:
+            # 依照 Rule 8: 定位并点击可见的次级切换按钮触发降级
+            switch_btn = page.locator('button:has-text("パスワード"), a:has-text("パスワード"), button:has-text("別の方法"), a:has-text("別の方法"), [id^="seco_"]').first
+            if switch_btn.count() > 0 and switch_btn.is_visible():
+                try:
+                    switch_btn.click()
+                    time.sleep(1.0)
+                except Exception:
+                    pass
+
+        # 3. 探测是否处于网络请求转圈加载状态（.h4k5-spin 等）
+        is_loading = False
+        try:
+            is_loading = page.locator('.h4k5-spin, .h4k5-spinner, [class*="spin"], [class*="loading"]').count() > 0
+        except Exception:
+            pass
+        if is_loading:
+            time.sleep(0.8)
+            continue
+
+        # 4. 探测是否出现明确的用户名报错
+        if any(kw in body_txt for kw in ['ユーザIDが正しくありません', 'ユーザIDを入力してください', '入力内容をご確認ください']):
+            break
+                    
+        time.sleep(0.4)
+
+    if not p_in or not p_in.is_visible():
+        cand_pin = page.locator('input[type="password"], #password_current').first
+        if cand_pin.count() > 0 and cand_pin.is_visible():
+            p_in = cand_pin
+
+    if not p_in or not p_in.is_visible():
+        body_txt = page.locator('body').inner_text() or ''
+        if 'パスキー' in body_txt or 'webauthn' in page.url:
+            snap_pk = snaps_dir / f"{safe_acc}_passkey_locked.png"
+            try:
+                page.screenshot(path=str(snap_pk))
+                res['screenshots'].append(str(snap_pk))
+            except Exception: pass
+            res['status'] = 'two_factor_passkey'
+            print(f"[{worker_tag}] 🔒 需Passkey验证(纯硬件锁): {email}", flush=True)
+            return res
+            
+        snap_nopwd = snaps_dir / f"{safe_acc}_failed_no_password.png"
+        try:
+            page.screenshot(path=str(snap_nopwd))
+            res['screenshots'].append(str(snap_nopwd))
+        except Exception: pass
+        try:
+            with open(snaps_dir / f"{safe_acc}_no_pwd_body.html", 'w', encoding='utf-8') as hf:
+                hf.write(page.content())
+        except Exception: pass
         res['status'] = 'no_password_field'
+        print(f"[{worker_tag}] ⚠️ 无密码框(已现场截图留证): {email}", flush=True)
         return res
         
     p_in.fill(password)
-    btn_login = page.locator('button:has-text("ログイン"), button[type="submit"]').first
+    btn_login = page.locator('#cta011:visible, button:has-text("ログイン"), button:has-text("次へ"), button[type="submit"]').first
     if btn_login.count() > 0 and btn_login.is_visible():
         btn_login.click()
     else:
         p_in.press('Enter')
     time.sleep(3.5)
     
-    # 检查登录结果与网关中转页
-    for _ in range(5):
+    # 检查登录结果与网关中转页 (弹性轮询最多 20 次，每次 1.5s，总计 30s，自适应跨洋在途网络)
+    for _ in range(20):
         body_txt = page.locator('body').inner_text() or ''
+        curr_url = page.url
         
+        # 判定 A: 密码错误明确报错 (立即现场截图落盘)
+        if any(kw in body_txt for kw in ['ユーザIDまたはパスワードが正しくありません', 'ユーザID・パスワードが一致しません', '入力内容をご確認ください']):
+            snap_fail = snaps_dir / f"{safe_acc}_failed_wrong_password.png"
+            try:
+                page.screenshot(path=str(snap_fail))
+                res['screenshots'].append(str(snap_fail))
+            except Exception: pass
+            res['status'] = 'wrong_password'
+            print(f"[{worker_tag}] ❌ 密码错误(已现场截图): {email}", flush=True)
+            return res
+            
+        # 判定 B: 2FA 短信验证码 (立即现场截图落盘)
+        if any(kw in body_txt for kw in ['ワンタイムパスワード', '2段階認証', '確認コード']):
+            snap_2fa = snaps_dir / f"{safe_acc}_failed_2fa.png"
+            try:
+                page.screenshot(path=str(snap_2fa))
+                res['screenshots'].append(str(snap_2fa))
+            except Exception: pass
+            res['status'] = 'two_factor'
+            print(f"[{worker_tag}] ⚠️ 需2FA(已现场截图): {email}", flush=True)
+            return res
+
         # 网关第 1 页: 本人連絡先の選択 (4行物理地址)
         if '本人連絡先の選択' in body_txt or '連絡先' in body_txt:
             snap_gw1 = snaps_dir / f"{safe_acc}_gateway_contact.png"
@@ -266,22 +348,64 @@ def extract_single_account(page, email, password, snaps_dir, safe_acc, worker_ta
                 next_btn.click()
                 time.sleep(2.5)
                 
-        if 'ユーザIDまたはパスワードが正しくありません' in body_txt or '入力内容をご確認ください' in body_txt or 'ワンタイムパスワード' in body_txt:
-            break
-        if 'postlogin' in page.url or 'order-list' in page.url or 'mydata' in page.url:
-            break
+        # 网关第 3 页: 会員情報の追加登録 (性别/生日必填，依零造假铁律不虚拟填报)
+        if '会員情報の追加登録' in body_txt:
+            snap_reg = snaps_dir / f"{safe_acc}_gateway_additional_registration.png"
+            try:
+                page.screenshot(path=str(snap_reg))
+                res['screenshots'].append(str(snap_reg))
+            except Exception: pass
+            res['status'] = 'additional_registration_required'
+            print(f"[{worker_tag}] ⚠️ 官方强制追加登记(性别/生日): {email}", flush=True)
+            return res
+
+        if 'postlogin' in curr_url or 'order-list' in curr_url or 'mydata' in curr_url or 'rakuten.co.jp' in curr_url:
+            if 'login.account.rakuten.com' not in curr_url:
+                break
+                
+        # 检查是否正处于网络转圈加载中
+        is_spinning = False
+        try:
+            is_spinning = page.locator('.h4k5-spin, .h4k5-spinner, [class*="spin"], [class*="loading"]').count() > 0
+        except Exception:
+            pass
+        if is_spinning:
+            time.sleep(1.5)
+            continue
+            
         time.sleep(1.2)
         
     body_txt = page.locator('body').inner_text() or ''
-    if 'ユーザIDまたはパスワードが正しくありません' in body_txt or '入力内容をご確認ください' in body_txt:
+    if any(kw in body_txt for kw in ['ユーザIDまたはパスワードが正しくありません', 'ユーザID・パスワードが一致しません', '入力内容をご確認ください']):
+        snap_fail = snaps_dir / f"{safe_acc}_failed_wrong_password.png"
+        try:
+            page.screenshot(path=str(snap_fail))
+            res['screenshots'].append(str(snap_fail))
+        except Exception: pass
         res['status'] = 'wrong_password'
-        print(f"[{worker_tag}] ❌ 密码错误: {email}", flush=True)
+        print(f"[{worker_tag}] ❌ 密码错误(已现场截图): {email}", flush=True)
         return res
-    if 'ワンタイムパスワード' in body_txt or '2段階認証' in body_txt:
+    if any(kw in body_txt for kw in ['ワンタイムパスワード', '2段階認証']):
+        snap_2fa = snaps_dir / f"{safe_acc}_failed_2fa.png"
+        try:
+            page.screenshot(path=str(snap_2fa))
+            res['screenshots'].append(str(snap_2fa))
+        except Exception: pass
         res['status'] = 'two_factor'
-        print(f"[{worker_tag}] ⚠️ 需2FA: {email}", flush=True)
+        print(f"[{worker_tag}] ⚠️ 需2FA(已现场截图): {email}", flush=True)
         return res
         
+    curr_url = page.url
+    if 'login.account.rakuten.com' in curr_url:
+        snap_stuck = snaps_dir / f"{safe_acc}_failed_login_stuck.png"
+        try:
+            page.screenshot(path=str(snap_stuck))
+            res['screenshots'].append(str(snap_stuck))
+        except Exception: pass
+        res['status'] = 'login_unconfirmed'
+        print(f"[{worker_tag}] ❌ 登录未完成仍停留在认证页: {email}", flush=True)
+        return res
+
     res['status'] = 'active'
     
     # 2. 访问官方购买履历
@@ -292,6 +416,16 @@ def extract_single_account(page, email, password, snaps_dir, safe_acc, worker_ta
     time.sleep(3.0)
     clear_overlays(page)
     
+    if 'login' in page.url:
+        snap_bounce = snaps_dir / f"{safe_acc}_failed_session_bounced.png"
+        try:
+            page.screenshot(path=str(snap_bounce))
+            res['screenshots'].append(str(snap_bounce))
+        except Exception: pass
+        res['status'] = 'session_expired'
+        print(f"[{worker_tag}] ❌ 会话未建立被重定向回登录页: {email}", flush=True)
+        return res
+        
     snap_ord = snaps_dir / f"{safe_acc}_orders_list.png"
     try:
         page.screenshot(path=str(snap_ord), full_page=True)
